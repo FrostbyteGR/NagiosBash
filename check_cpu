@@ -1,0 +1,108 @@
+#!/bin/sh
+################################################################################
+# Linux CPU utilization nagios plugin                                          #
+# Copyright (c) 2019 Frostbyte <frostbytegr@gmail.com>                         #
+#                                                                              #
+# Credits:                                                                     #
+# <github.com/hugme> - sample code for linux nagios checks                     #
+# <devel@nagios-plugins.org> - plugin development guidelines                   #
+#                                                                              #
+# This program is free software: you can redistribute it and/or modify         #
+# it under the terms of the GNU General Public License as published by         #
+# the Free Software Foundation, either version 3 of the License, or            #
+# (at your option) any later version.                                          #
+#                                                                              #
+# This program is distributed in the hope that it will be useful,              #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of               #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the                #
+# GNU General Public License for more details.                                 #
+#                                                                              #
+# You should have received a copy of the GNU General Public License            #
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.        #
+################################################################################
+
+# Usage helper function
+usage() {
+cat << EOF
+Usage:
+$0 [-w util_warn_threshold] [-c util_warn_threshold]
+Example: $0 -w 80 -c 90
+EOF
+exit 3
+}
+
+# Input error helper function
+inputError() {
+	# Throw supplied error message and exit
+	echo "$1"
+	exit 3
+}
+
+# Parse user-supplied arguments
+while getopts ":w:c:" inputArgs; do
+	case "${inputArgs}" in
+		w) thresholdWarn="${OPTARG}" ;;
+		c) thresholdCrit="${OPTARG}" ;;
+		*) usage ;;
+	esac
+done
+shift $((OPTIND-1))
+
+# Validate any user-supplied arguments
+[ -z "$thresholdWarn" ] || {
+	[ -z $(echo $thresholdWarn | tr -d [:digit:]) ] || inputError "The warning threshold value may only contain numbers."
+	[ $thresholdWarn -le 0 ] || [ $thresholdWarn -ge 100 ] && inputError "The warning threshold value must be between 1 and 99."
+}
+[ -z "$thresholdCrit" ] || {
+	[ -z $(echo $thresholdCrit | tr -d [:digit:]) ] || inputError "The critical threshold value may only contain numbers."
+	[ $thresholdCrit -le 0 ] || [ $thresholdCrit -ge 100 ] && inputError "The critical threshold value must be between 1 and 99."
+}
+[ ! -z "$thresholdWarn" ] && [ ! -z "$thresholdCrit" ] && [ $thresholdCrit -lt $thresholdWarn ] && inputError "The critical threshold value must be higher than or equal to the warning threshold value."
+
+# Disable any non-specified thresholds
+[ -z "$thresholdWarn" ] && thresholdWarn=0
+[ -z "$thresholdCrit" ] && thresholdCrit=0
+
+# Calculate and construct a standard nagios response
+result=$(echo `top -bn1 | grep -E "^%Cpu\(s\)"` | awk \
+	-v thresholdWarn=$thresholdWarn \
+	-v thresholdCrit=$thresholdCrit \
+	'{
+		cpuUser=$2
+		cpuSystem=$4
+		cpuNice=$6
+		cpuIdle=$8
+		cpuIOWait=$10
+		cpuSteal=$16
+	}
+	END {
+		cpuUtil=100-cpuIdle
+		result="OK"
+		exitCode=0
+		if (cpuUtil > thresholdCrit && thresholdCrit > 0) {
+			result="CRITICAL"
+			exitCode=2
+		} else if (cpuUtil > thresholdWarn && thresholdWarn > 0) {
+			result="WARNING"
+			exitCode=1
+		}
+		print exitCode" "result" - \
+		Utilization: "cpuUtil"% \
+		User: "cpuUser"% \
+		Nice: "cpuNice"% \
+		System: "cpuSystem"% \
+		IOWait: "cpuIOWait"% \
+		Steal: "cpuSteal"% \
+		Idle: "cpuIdle"% | \
+		util="cpuUtil";"thresholdWarn";"thresholdCrit";0 \
+		user="cpuUser";0;0;0 \
+		nice="cpuNice";0;0;0 \
+		system="cpuSystem";0;0;0 \
+		iowait="cpuIOWait";0;0;0 \
+		steal="cpuSteal";0;0;0 \
+		idle="cpuIdle";0;0;0"
+	}')
+
+# Respond and exit
+echo ${result#* }
+exit ${result%% *}

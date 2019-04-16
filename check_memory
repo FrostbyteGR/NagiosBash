@@ -1,0 +1,134 @@
+#!/bin/sh
+################################################################################
+# Linux memory utilization nagios plugin                                       #
+# Copyright (c) 2019 Frostbyte <frostbytegr@gmail.com>                         #
+#                                                                              #
+# Credits:                                                                     #
+# <github.com/hugme> - sample code for linux nagios checks                     #
+# <devel@nagios-plugins.org> - plugin development guidelines                   #
+#                                                                              #
+# This program is free software: you can redistribute it and/or modify         #
+# it under the terms of the GNU General Public License as published by         #
+# the Free Software Foundation, either version 3 of the License, or            #
+# (at your option) any later version.                                          #
+#                                                                              #
+# This program is distributed in the hope that it will be useful,              #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of               #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the                #
+# GNU General Public License for more details.                                 #
+#                                                                              #
+# You should have received a copy of the GNU General Public License            #
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.        #
+################################################################################
+
+# Usage helper function
+usage() {
+cat << EOF
+Usage:
+$0 [-w util_warn_threshold] [-c util_warn_threshold] [-u friendly_unit] [-n]
+Friendly units: K=Kilobytes, M=Megabytes, G=Gigabytes, T=Terabytes.
+Example: $0 -w 80 -c 90 -u M
+Cached memory and buffers will not be included in system's free memory when calculating utilization, with the -n argument.
+EOF
+exit 3
+}
+
+# Input error helper function
+inputError() {
+	# Throw supplied error message and exit
+	echo "$1"
+	exit 3
+}
+
+# Parse user-supplied arguments
+while getopts ":w:c:u:n" inputArgs; do
+	case "${inputArgs}" in
+		w) thresholdWarn="${OPTARG}" ;;
+		c) thresholdCrit="${OPTARG}" ;;
+		u) friendlyUnit="${OPTARG}" ;;
+		n) noCachedMemory=1 ;;
+		*) usage ;;
+	esac
+done
+shift $((OPTIND-1))
+
+# Apply any defaults if needed
+[ -z "$friendlyUnit" ] && friendlyUnit=M
+[ -z "$noCachedMemory" ] && noCachedMemory=0
+
+# Validate any user-supplied arguments
+[ -z "$thresholdWarn" ] || {
+	[ -z $(echo $thresholdWarn | tr -d [:digit:]) ] || inputError "The warning threshold value may only contain numbers."
+	[ $thresholdWarn -le 0 ] || [ $thresholdWarn -ge 100 ] && inputError "The warning threshold value must be between 1 and 99."
+}
+[ -z "$thresholdCrit" ] || {
+	[ -z $(echo $thresholdCrit | tr -d [:digit:]) ] || inputError "The critical threshold value may only contain numbers."
+	[ $thresholdCrit -le 0 ] || [ $thresholdCrit -ge 100 ] && inputError "The critical threshold value must be between 1 and 99."
+}
+[ ! -z "$thresholdWarn" ] && [ ! -z "$thresholdCrit" ] && [ $thresholdCrit -lt $thresholdWarn ] && inputError "The critical threshold value must be higher than or equal to the warning threshold value."
+case $friendlyUnit in
+	k|K) unitDivider=1 ;;
+	m|M) unitDivider=1024 ;;
+	g|G) unitDivider=1048576 ;;
+	t|T) unitDivider=1073741824 ;;
+	*) inputError "The friendly unit value may only be one of the following: K, M, G, or T. (Case Insensitive)" ;;
+esac
+
+# If the memory information file is missing
+memoryInfo="/proc/meminfo"
+[ -f "$memoryInfo" ] || {
+	# Throw error and exit
+	echo "The memory information file $memoryInfo is missing."
+	exit 3
+}
+
+# Disable any non-specified thresholds
+[ -z "$thresholdWarn" ] && thresholdWarn=0
+[ -z "$thresholdCrit" ] && thresholdCrit=0
+
+#Calculate and construct a standard nagios response
+result=$(awk \
+	-v thresholdWarn=$thresholdWarn \
+	-v thresholdCrit=$thresholdCrit \
+	-v friendlyUnit=$friendlyUnit \
+	-v unitDivider=$unitDivider \
+	-v noCachedMemory=$noCachedMemory \
+	'/^MemTotal:/	{ memTotal=$2 }
+	/^MemFree:/	{ memFree=$2 }
+	/^Buffers:/	{ memBuffers=$2 }
+	/^Cached:/	{ memCached=$2 }
+	/^Active:/	{ memActive=$2 }
+	/^Inactive:/	{ memInactive=$2 }
+	END {
+		if (noCachedMemory == 0) {
+			memFree=memFree+memCached+memBuffers
+		}
+		memUsed=memTotal-memFree
+		memUtil=memUsed/memTotal*100
+		result="OK"
+		exitCode=0
+		if (memUtil > thresholdCrit && thresholdCrit > 0) {
+			result="CRITICAL"
+			exitCode=2
+		} else if (memUtil > thresholdWarn && thresholdWarn > 0) {
+			result="WARNING"
+			exitCode=1
+		}
+		print exitCode" "result" - \
+		Utilization: "memUtil"% \
+		Total: "memTotal/unitDivider friendlyUnit" \
+		Active: "memActive/unitDivider friendlyUnit" \
+		Inactive: "memInactive/unitDivider friendlyUnit" \
+		Buffers: "memBuffers/unitDivider friendlyUnit" \
+		Cached: "memCached/unitDivider friendlyUnit" | \
+		util="memUtil";"thresholdWarn";"thresholdCrit";0 \
+		total="memTotal";0;0;0 \
+		active="memActive";0;0;0 \
+		inactive="memInactive";0;0;0 \
+		buffers="memBuffers";0;0;0 \
+		cached="memCached";0;0;0"
+	}' "$memoryInfo")
+
+# Respond and exit
+echo ${result#* }
+exit ${result%% *}

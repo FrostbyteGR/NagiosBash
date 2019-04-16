@@ -1,0 +1,105 @@
+#!/bin/sh
+################################################################################
+# Linux CPU temperature nagios plugin for single board computers               #
+# Copyright (c) 2019 Frostbyte <frostbytegr@gmail.com>                         #
+#                                                                              #
+# Credits:                                                                     #
+# <github.com/hugme> - sample code for linux nagios checks                     #
+# <devel@nagios-plugins.org> - plugin development guidelines                   #
+#                                                                              #
+# This program is free software: you can redistribute it and/or modify         #
+# it under the terms of the GNU General Public License as published by         #
+# the Free Software Foundation, either version 3 of the License, or            #
+# (at your option) any later version.                                          #
+#                                                                              #
+# This program is distributed in the hope that it will be useful,              #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of               #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the                #
+# GNU General Public License for more details.                                 #
+#                                                                              #
+# You should have received a copy of the GNU General Public License            #
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.        #
+################################################################################
+
+# Usage helper function
+usage() {
+cat << EOF
+Usage:
+$0 [-w temp_warn_threshold] [-c temp_warn_threshold]
+Example: $0 -w 65 -c 70
+EOF
+exit 3
+}
+
+# Input error helper function
+inputError() {
+	# Throw supplied error message and exit
+	echo "$1"
+	exit 3
+}
+
+# Parse user-supplied arguments
+while getopts ":w:c:" inputArgs; do
+	case "${inputArgs}" in
+		w) thresholdWarn="${OPTARG}" ;;
+		c) thresholdCrit="${OPTARG}" ;;
+		*) usage ;;
+	esac
+done
+shift $((OPTIND-1))
+
+# Validate any user-supplied arguments
+[ -z "$thresholdWarn" ] || {
+	[ -z $(echo $thresholdWarn | tr -d [:digit:]) ] || inputError "The warning threshold value may only contain numbers."
+	[ $thresholdWarn -le 0 ] && inputError "The warning threshold value must be above zero."
+}
+[ -z "$thresholdCrit" ] || {
+	[ -z $(echo $thresholdCrit | tr -d [:digit:]) ] || inputError "The critical threshold value may only contain numbers."
+	[ $thresholdCrit -le 0 ] && inputError "The critical threshold value must be above zero."
+}
+[ ! -z "$thresholdWarn" ] && [ ! -z "$thresholdCrit" ] && [ $thresholdCrit -lt $thresholdWarn ] && inputError "The critical threshold value must be higher than or equal to the warning threshold value."
+
+# Select the proper thermal information file
+if grep -Eiq '^Hardware\s+:\s+(Rockchip).*$' /proc/cpuinfo; then
+	# ASUS Tinker Board
+	thermalInfo="/sys/class/thermal/thermal_zone1/temp"
+else
+	# Everything else
+	thermalInfo="/sys/class/thermal/thermal_zone0/temp"
+fi
+
+# If the thermal information file is missing
+[ -f "$thermalInfo" ] || {
+	echo "The thermal information file $thermalInfo is missing."
+	exit 3
+}
+
+# Disable any non-specified thresholds
+[ -z "$thresholdWarn" ] && thresholdWarn=0
+[ -z "$thresholdCrit" ] && thresholdCrit=0
+
+# Calculate and construct a standard nagios response
+result=$(awk \
+	-v thresholdWarn=$thresholdWarn \
+	-v thresholdCrit=$thresholdCrit \
+	'{
+		cpuTemp=$1/1000
+	}
+	END {
+		result="OK"
+		exitCode=0
+		if (cpuTemp > thresholdCrit && thresholdCrit > 0) {
+			result="CRITICAL"
+			exitCode=2
+		} else if (cpuTemp > thresholdWarn && thresholdWarn > 0) {
+			result="WARNING"
+			exitCode=1
+		}
+		print exitCode" "result" - \
+		Temperature: "cpuTemp"C | \
+		temp="cpuTemp";"thresholdWarn";"thresholdCrit";0"
+	}' "$thermalInfo")
+
+# Respond and exit
+echo ${result#* }
+exit ${result%% *}

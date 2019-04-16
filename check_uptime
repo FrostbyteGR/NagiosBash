@@ -1,0 +1,71 @@
+#!/bin/sh
+################################################################################
+# Linux uptime nagios plugin                                                   #
+# Copyright (c) 2019 Frostbyte <frostbytegr@gmail.com>                         #
+#                                                                              #
+# Credits:                                                                     #
+# <github.com/hugme> - sample code for linux nagios checks                     #
+# <devel@nagios-plugins.org> - plugin development guidelines                   #
+#                                                                              #
+# This program is free software: you can redistribute it and/or modify         #
+# it under the terms of the GNU General Public License as published by         #
+# the Free Software Foundation, either version 3 of the License, or            #
+# (at your option) any later version.                                          #
+#                                                                              #
+# This program is distributed in the hope that it will be useful,              #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of               #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the                #
+# GNU General Public License for more details.                                 #
+#                                                                              #
+# You should have received a copy of the GNU General Public License            #
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.        #
+################################################################################
+
+# If the uptime information file is missing
+uptimeInfo="/proc/uptime"
+[ -f "$uptimeInfo" ] || {
+	echo "The uptime information file $uptimeInfo is missing."
+	exit 3
+}
+
+# Calculate and construct a standard nagios response
+result=$(awk \
+	'{
+		timeUnits[6]="year"
+		timeUnits[5]="month"
+		timeUnits[4]="week"
+		timeUnits[3]="day"
+		timeUnits[2]="hour"
+		timeUnits[1]="minute"
+		timeUnits[0]="second"
+		timeFractions[6]=int($1/31536000)
+		timeFractions[5]=int(($1%31536000)/2592000)
+		timeFractions[4]=int(($1%2592000)/604800)
+		timeFractions[3]=int(($1%604800)/86400)
+		timeFractions[2]=int(($1%86400)/3600)
+		timeFractions[1]=int(($1%3600)/60)
+		timeFractions[0]=int($1%60)
+	}
+	END {
+		for (fractionIndex=6; fractionIndex>=0; fractionIndex--) {
+			if (timeFractions[fractionIndex] > 0) {
+				uptimeDetailed=uptimeDetailed" "timeFractions[fractionIndex]" "timeUnits[fractionIndex]
+				if (timeFractions[fractionIndex] > 1) {
+					uptimeDetailed=uptimeDetailed"s"
+				}
+				for (subsequentFractionIndex=fractionIndex-1; subsequentFractionIndex>=0; subsequentFractionIndex--) {
+					if (timeFractions[subsequentFractionIndex] > 0) {
+						uptimeDetailed=uptimeDetailed","
+						break
+					}
+				}
+			}
+		}
+		result="OK"
+		exitCode=0
+		print exitCode" "result" - Uptime:"uptimeDetailed" | uptime="$1";0;0;0"
+	}' "$uptimeInfo")
+
+# Respond and exit
+echo ${result#* }
+exit ${result%% *}
