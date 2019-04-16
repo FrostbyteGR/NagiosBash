@@ -2,7 +2,7 @@
 
 ## I. DESCRIPTION:
 
-A collection of Linux nagios plugins written in bash
+A collection of Linux nagios plugins written in shell
 
 Copyright (c) 2019 Frostbyte <frostbytegr@gmail.com>
 
