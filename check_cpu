@@ -64,19 +64,21 @@ shift $((OPTIND-1))
 [ -z "$thresholdCrit" ] && thresholdCrit=0
 
 # Calculate and construct a standard nagios response
-result=$(echo `top -bn1 | grep -E "^%Cpu\(s\)"` | awk \
+result=$(top -bn2 -d1 | awk \
 	-v thresholdWarn=$thresholdWarn \
 	-v thresholdCrit=$thresholdCrit \
-	'{
+	'/^%Cpu\(s\)/{
 		cpuUser=$2
 		cpuSystem=$4
 		cpuNice=$6
 		cpuIdle=$8
 		cpuIOWait=$10
+		cpuHWInterrupt=$12
+		cpuSWInterrupt=$14
 		cpuSteal=$16
 	}
 	END {
-		cpuUtil=100-cpuIdle
+		cpuUtil=cpuUser+cpuSystem+cpuNice+cpuHWInterrupt+cpuSWInterrupt
 		result="OK"
 		exitCode=0
 		if (cpuUtil > thresholdCrit && thresholdCrit > 0) {
@@ -92,6 +94,8 @@ result=$(echo `top -bn1 | grep -E "^%Cpu\(s\)"` | awk \
 		Nice: "cpuNice"% \
 		System: "cpuSystem"% \
 		IOWait: "cpuIOWait"% \
+		HWInterrupt: "cpuHWInterrupt"% \
+		SWInterrupt: "cpuSWInterrupt"% \
 		Steal: "cpuSteal"% \
 		Idle: "cpuIdle"% | \
 		util="cpuUtil";"thresholdWarn";"thresholdCrit";0 \
@@ -99,6 +103,8 @@ result=$(echo `top -bn1 | grep -E "^%Cpu\(s\)"` | awk \
 		nice="cpuNice";0;0;0 \
 		system="cpuSystem";0;0;0 \
 		iowait="cpuIOWait";0;0;0 \
+		hwint="cpuHWInterrupt";0;0;0 \
+		swint="cpuSWInterrupt";0;0;0 \
 		steal="cpuSteal";0;0;0 \
 		idle="cpuIdle";0;0;0"
 	}')
