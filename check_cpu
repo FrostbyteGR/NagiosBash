@@ -59,55 +59,64 @@ shift $((OPTIND-1))
 }
 [ ! -z "$thresholdWarn" ] && [ ! -z "$thresholdCrit" ] && [ $thresholdCrit -lt $thresholdWarn ] && inputError "The critical threshold value must be higher than or equal to the warning threshold value."
 
+# If the processor statistics file is missing
+procStat="/proc/stat"
+[ -f "$procStat" ] || {
+	# Throw error and exit
+	echo "The processor statistics file $procStat is missing."
+	exit 3
+}
+
 # Disable any non-specified thresholds
 [ -z "$thresholdWarn" ] && thresholdWarn=0
 [ -z "$thresholdCrit" ] && thresholdCrit=0
 
 # Calculate and construct a standard nagios response
-result=$(top -bn2 -d1 | awk \
+result=$(awk \
 	-v thresholdWarn=$thresholdWarn \
 	-v thresholdCrit=$thresholdCrit \
-	'/^%Cpu\(s\)/{
-		cpuUser=$2
-		cpuSystem=$4
-		cpuNice=$6
-		cpuIdle=$8
-		cpuIOWait=$10
-		cpuHWInterrupt=$12
-		cpuSWInterrupt=$14
-		cpuSteal=$16
+	-v initialMeasurement="$(awk '/^cpu\s+/{$1=""; print $0}' "$procStat"; sleep 1)" \
+	'/^cpu\s+/{
+		split(initialMeasurement,initialValues," ")
+		for (valueIndex in initialValues) totalTime-=initialValues[valueIndex]
+		for (valueIndex=2; valueIndex<=NF; valueIndex++) totalTime+=$valueIndex
+		for (valueIndex=2; valueIndex<=NF; valueIndex++) cpuUtil[valueIndex]=100*($valueIndex-initialValues[valueIndex-1])/totalTime
 	}
 	END {
-		cpuUtil=cpuUser+cpuSystem+cpuNice+cpuHWInterrupt+cpuSWInterrupt
+		cpuUtil[1]=cpuUtil[2]+cpuUtil[3]+cpuUtil[4]+cpuUtil[7]+cpuUtil[8]+cpuUtil[10]+cpuUtil[11]
 		result="OK"
 		exitCode=0
-		if (cpuUtil > thresholdCrit && thresholdCrit > 0) {
+		if (cpuUtil[1] > thresholdCrit && thresholdCrit > 0) {
 			result="CRITICAL"
 			exitCode=2
-		} else if (cpuUtil > thresholdWarn && thresholdWarn > 0) {
+		} else if (cpuUtil[1] > thresholdWarn && thresholdWarn > 0) {
 			result="WARNING"
 			exitCode=1
 		}
 		print exitCode" "result" - \
-		Utilization: "cpuUtil"% \
-		User: "cpuUser"% \
-		Nice: "cpuNice"% \
-		System: "cpuSystem"% \
-		IOWait: "cpuIOWait"% \
-		HWInterrupt: "cpuHWInterrupt"% \
-		SWInterrupt: "cpuSWInterrupt"% \
-		Steal: "cpuSteal"% \
-		Idle: "cpuIdle"% | \
-		util="cpuUtil";"thresholdWarn";"thresholdCrit";0 \
-		user="cpuUser";0;0;0 \
-		nice="cpuNice";0;0;0 \
-		system="cpuSystem";0;0;0 \
-		iowait="cpuIOWait";0;0;0 \
-		hwint="cpuHWInterrupt";0;0;0 \
-		swint="cpuSWInterrupt";0;0;0 \
-		steal="cpuSteal";0;0;0 \
-		idle="cpuIdle";0;0;0"
-	}')
+		Utilization: "cpuUtil[1]"% \
+		User: "cpuUtil[2]"% \
+		Nice: "cpuUtil[3]"% \
+		System: "cpuUtil[4]"% \
+		Idle: "cpuUtil[5]"% \
+		IOWait: "cpuUtil[6]"% \
+		HWInterrupt: "cpuUtil[7]"% \
+		SWInterrupt: "cpuUtil[8]"% \
+		Steal: "cpuUtil[9]"% \
+		Guest: "cpuUtil[10]"% \
+		GuestNice: "cpuUtil[11]"% | \
+		util="cpuUtil[1]";"thresholdWarn";"thresholdCrit";0 \
+		user="cpuUtil[2]";0;0;0 \
+		nice="cpuUtil[3]";0;0;0 \
+		system="cpuUtil[4]";0;0;0 \
+		idle="cpuUtil[5]";0;0;0 \
+		iowait="cpuUtil[6]";0;0;0 \
+		hwint="cpuUtil[7]";0;0;0 \
+		swint="cpuUtil[8]";0;0;0 \
+		steal="cpuUtil[9]";0;0;0 \
+		guest="cpuUtil[10]";0;0;0 \
+		guestnice="cpuUtil[11]";0;0;0"
+	}' "$procStat")
 
 # Respond and exit
 echo ${result#* }
