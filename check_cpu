@@ -6,6 +6,7 @@
 # Credits:                                                                     #
 # <github.com/hugme> - sample code for linux nagios checks                     #
 # <devel@nagios-plugins.org> - plugin development guidelines                   #
+# <github.com/cyberang3l> - information on the double inclusion of guest times #
 #                                                                              #
 # This program is free software: you can redistribute it and/or modify         #
 # it under the terms of the GNU General Public License as published by         #
@@ -75,15 +76,16 @@ procStat="/proc/stat"
 result=$(awk \
 	-v thresholdWarn=$thresholdWarn \
 	-v thresholdCrit=$thresholdCrit \
-	-v initialMeasurement="$(awk '/^cpu\s+/{$1=""; print $0}' "$procStat"; sleep 1)" \
+	-v initialMeasurement="$(awk '/^cpu\s+/' "$procStat"; sleep 1)" \
 	'/^cpu\s+/{
 		split(initialMeasurement,initialValues," ")
-		for (valueIndex in initialValues) totalTime-=initialValues[valueIndex]
-		for (valueIndex=2; valueIndex<=NF; valueIndex++) totalTime+=$valueIndex
-		for (valueIndex=2; valueIndex<=NF; valueIndex++) cpuUtil[valueIndex]=100*($valueIndex-initialValues[valueIndex-1])/totalTime
+		for (valueIndex=2; valueIndex<=9 in initialValues; valueIndex++) totalTime-=initialValues[valueIndex]
+		for (valueIndex=2; valueIndex<=9; valueIndex++) totalTime+=$valueIndex
+		for (valueIndex=2; valueIndex<=NF; valueIndex++) cpuUtil[valueIndex]=100*($valueIndex-initialValues[valueIndex])/totalTime
 	}
 	END {
-		cpuUtil[1]=cpuUtil[2]+cpuUtil[3]+cpuUtil[4]+cpuUtil[7]+cpuUtil[8]+cpuUtil[10]+cpuUtil[11]
+		cpuUtil[1]=cpuUtil[2]+cpuUtil[3]+cpuUtil[4]+cpuUtil[7]+cpuUtil[8]
+		if (cpuUtil[5] == 0) cpuUtil[1]+=cpuUtil[9]
 		result="OK"
 		exitCode=0
 		if (cpuUtil[1] > thresholdCrit && thresholdCrit > 0) {
@@ -95,8 +97,8 @@ result=$(awk \
 		}
 		print exitCode" "result" - \
 		Utilization: "cpuUtil[1]"% \
-		User: "cpuUtil[2]"% \
-		Nice: "cpuUtil[3]"% \
+		User: "cpuUtil[2]-cpuUtil[10]"% \
+		Nice: "cpuUtil[3]-cpuUtil[11]"% \
 		System: "cpuUtil[4]"% \
 		Idle: "cpuUtil[5]"% \
 		IOWait: "cpuUtil[6]"% \
@@ -106,8 +108,8 @@ result=$(awk \
 		Guest: "cpuUtil[10]"% \
 		GuestNice: "cpuUtil[11]"% | \
 		util="cpuUtil[1]";"thresholdWarn";"thresholdCrit";0 \
-		user="cpuUtil[2]";0;0;0 \
-		nice="cpuUtil[3]";0;0;0 \
+		user="cpuUtil[2]-cpuUtil[10]";0;0;0 \
+		nice="cpuUtil[3]-cpuUtil[11]";0;0;0 \
 		system="cpuUtil[4]";0;0;0 \
 		idle="cpuUtil[5]";0;0;0 \
 		iowait="cpuUtil[6]";0;0;0 \
